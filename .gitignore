@@ -1,0 +1,38 @@
+# R session and rendered artifacts
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+*.html
+*.log
+*_cache/
+*_files/
+
+# Python and Jupyter
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Source data are intentionally excluded from the public repository
+data/*.csv
+data/*.tsv
+data/*.xlsx
+data/*.json
+data/*.parquet
+data/*.db
+data/*.sqlite
+!data/README.md
+!data/data_dictionary.md
+
+# Generated outputs
+outputs/figures/*.png
+outputs/figures/*.pdf
+!outputs/figures/README.md
+
+# OS and editor files
+.DS_Store
+*.swp
+*.swo
+

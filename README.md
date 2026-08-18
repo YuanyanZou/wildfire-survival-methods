@@ -12,6 +12,8 @@
 Can early wildfire behavior predict how soon a fire will approach an evacuation zone? 
 Using a 5-hour landmark design, this project models conditional time-to-hit for wildfires approaching evacuation zones at 12, 24, 48, and 72 hours after ignition based on early-stage data. We use Cox-based feature screening and diagnostics to develop a primary log-logistic AFT model, with Random Survival Forest as a nonlinear sensitivity benchmark. 
 
+**[Read the full course report (PDF)](paper/STA260_Wildfire_Survival.pdf)**
+
 ## Key Findings
 
 - **Fire dynamics were more informative than static initial geometry.**

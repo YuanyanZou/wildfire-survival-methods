@@ -14,7 +14,9 @@ The candidate fire-dynamics variables are correlated. Elastic Net combines L1 an
 
 ## Why transition from Cox PH to AFT?
 
-Schoenfeld-residual tests in the course analysis indicated proportional-hazards violations for four covariates. Stratification would remove coefficient estimates for the stratified variables, and multiple time-varying effects would be difficult to support with only 69 observed events. An AFT model does not require proportional hazards and expresses covariate associations as acceleration or deceleration of survival time, which is interpretable for movement toward an evacuation zone.
+Schoenfeld-residual tests in the course analysis indicated proportional-hazards violations for four covariates. Stratification would remove coefficient estimates for the stratified variables, and multiple time-varying effects would be difficult to support with only 69 observed events. We also considered a discrete-time survival model. However, event times were concentrated early in follow-up while censoring extended much later, making the choice of time bins arbitrary and potentially unstable. Fine bins would yield sparse event counts, whereas coarse bins would lose timing information. 
+
+An AFT model does not require proportional hazards and expresses covariate associations as acceleration or deceleration of survival time, which is interpretable for movement toward an evacuation zone.
 
 The course report compared several parametric distributions and selected a log-logistic baseline by AIC and BIC.
 
@@ -22,3 +24,4 @@ The course report compared several parametric distributions and selected a log-l
 
 RSF can capture nonlinearities and interactions without proportional-hazards or parametric survival-time assumptions. In this small dataset, the expanded and reduced RSF models had nearly identical mean cross-validated C-index, while their full-sample-to-CV gaps were larger than the AFT model's. This supports using RSF as a benchmark and diagnostic rather than treating a small apparent performance gain as decisive.
 
+Exploratory partial-dependence plots and spline-based AFT specifications were also examined for nonlinear structure. Neither provided strong evidence that additional functional complexity materially improved internal model performance, so the simpler AFT specification was retained.

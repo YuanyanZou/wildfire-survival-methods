@@ -87,6 +87,7 @@ Retaining these variables would reduce the task to a deterministic threshold rul
 7. Evaluate internal discrimination and calibration.
 8. Compare the AFT feature set with an expanded RSF benchmark as a sensitivity analysis.
 
+[Methodology Notes](METHODOLOGY.md) shows rationale for landmarking, feature exclusion, model selection, and sensitivity analyses.
 ## Results
 
 The jointly authored report selected an 8-variable log-logistic AFT model:
@@ -116,6 +117,8 @@ Yichen led the AFT framework design and implementation.
 ```text
 .
 ├── README.md
+├── analysis/
+│   └── wildfire_survival_analysis.Rmd
 ├── assets/
 │   └── landmark-design.png
 ├── notebooks/
@@ -139,7 +142,7 @@ Yichen led the AFT framework design and implementation.
 
 ## Repository Scope
 
-This is a methodology-focused portfolio case study. Competition row-level data are not redistributed; reproduction requires downloading the data from the [WiDS 2026 Kaggle page](https://www.kaggle.com/competitions/WiDSWorldWide_GlobalDathon26/data). The course report is included with both authors' permission. An R analysis workflow will be added in a future update.
+This is a methodology-focused portfolio case study. Competition row-level data are not redistributed; reproduction requires downloading the data from the [WiDS 2026 Kaggle page](https://www.kaggle.com/competitions/WiDSWorldWide_GlobalDathon26/data). The course report and collaborative R analysis are included with both authors' permission.
 
 ## Paper
 

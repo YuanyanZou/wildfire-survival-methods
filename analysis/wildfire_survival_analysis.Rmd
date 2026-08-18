@@ -1,0 +1,1115 @@
+---
+title: "STA 260 Final Report - Code"
+author: "Yuanyan Zou, Yichen Wang"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(table1)
+library(tidyr)
+library(dplyr)
+library(kableExtra)
+library(survminer)
+library(survival)
+library(glmnet)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(flexsurv)
+library(splines)
+library(ggsurvfit)
+```
+
+
+
+```{r}
+fire <- read.csv("train.csv")
+fire <- fire %>%
+  mutate(fire_month_period = case_when(
+      event_start_month >= 1 & event_start_month <= 5 ~ "Non-summer (1-5)",
+      event_start_month >= 6 & event_start_month <= 9 ~ "Summer (6-9)")
+  )
+fire$area_growth_rate_ha_per_h[fire$event_id == "77028404"] <- 0
+fire$radial_growth_rate_m_per_h[fire$event_id == "77028404"] <- 0
+fire$log_area_ratio_0_5h[fire$event_id == "77028404"] <- 0
+# 77028404 has tiny small non-negative values, transformed to 0
+  
+fire_sum <- fire %>% rename(
+  "Low temporal resolution" = low_temporal_resolution_0_5h,
+  "Area growth rate (ha/hr)" = area_growth_rate_ha_per_h,
+  "Initial area (log)" = log1p_area_first,
+  "Ratio of final to initial area (log)" = log_area_ratio_0_5h,
+  "Rate of radial growth (m/hr)" = radial_growth_rate_m_per_h,
+  "Centroid Movement Speed" = centroid_speed_m_per_h,
+  "Angle between fire move and evac (cos)" = alignment_cos,
+  "Angle between fire move and evac (abs)" = alignment_abs,
+  "Fire start hour" = event_start_hour,
+  "Fire start day of week" = event_start_dayofweek,
+  "Fire start month" = fire_month_period
+)
+fire_sum$`Low temporal resolution` = factor(fire_sum$`Low temporal resolution`, 
+                                            levels = c(0, 1), labels = c("No", "Yes"))
+fire_sum$event = factor(fire_sum$event, levels = c(0, 1), labels = c("Fire Not Hit", "Fire Hit"))
+
+
+my.render.cont <- function(x) {
+  s <- stats.default(x)
+  c(
+    " " = "",  
+    "Mean (SD)" = sprintf("%.2f (%.2f)", s$MEAN, s$SD),
+    "Median [Min, Max]" = sprintf("%.2f [%.2f, %.2f]", s$MEDIAN, s$MIN, s$MAX)
+  )
+}
+
+# Table 1 (full predictors)
+tab1 <- table1(~ `Low temporal resolution` + `Area growth rate (ha/hr)` + `Initial area (log)` +
+                `Ratio of final to initial area (log)` + `Rate of radial growth (m/hr)` + 
+                 `Centroid Movement Speed` +  `Angle between fire move and evac (cos)` + 
+                 `Fire start hour` + `Fire start day of week`  + `Fire start month` | event, 
+               data = fire_sum, 
+       render.continuous=my.render.cont,
+       caption = "Summary statistics of the features by fire hit status.")
+```
+
+
+
+```{r, fig.width = 12}
+numeric_vars <-  c("Area growth rate (ha/hr)", "Ratio of final to initial area (log)",
+                   "Rate of radial growth (m/hr)", "Centroid Movement Speed")
+
+# Violin and box plots
+fire_long <- fire_sum %>%
+  dplyr::select(event, all_of(numeric_vars)) %>%
+  pivot_longer(cols = -event,
+               names_to = "Variable",
+               values_to = "Value")
+ggplot(fire_long,
+       aes(x = event, y = Value, fill = event)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.12, outlier.alpha = 0.2) +
+  facet_wrap(~ Variable,
+             scales = "free_y") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 9)
+  ) +
+  labs(x = "Event",
+       y = "Value",
+       title = "Fire Features by Event Status")
+```
+
+
+```{r, fig.align = "center"}
+# Heatmap
+R <- cor(fire %>% select_if(is.numeric) %>% select(-c("event_id", "time_to_hit_hours", "event")),
+         use = "pairwise.complete.obs",
+         method = "pearson")
+
+corrplot(
+  R,
+  method = "color",
+  type = "upper",
+  tl.cex = 0.4,
+  tl.col = "black",   
+  tl.srt = 45, 
+  number.cex = 0.6,
+  col = colorRampPalette(c("blue", "white", "red"))(200)
+)
+```
+
+
+
+```{r}
+# Temporal Varible Barplot
+ggplot(fire_sum,
+       aes(x = `Fire start hour`,
+           fill = event)) +
+  geom_bar(position = "dodge") +
+  labs(y = "Count", x = "Fire Start Hour", title = "Fire Start Hour by Event Status")
+
+ggplot(fire_sum,
+       aes(x = `Fire start day of week`,
+           fill = event)) +
+  geom_bar(position = "dodge") +
+  labs(y = "Count", x = "Fire Start Day of Week", title = "Fire Start Day of Week by Event Status")
+
+ggplot(fire_sum,
+       aes(x = `Fire start month`,
+           fill = event)) +
+  geom_bar(position = "dodge") +
+  labs(y = "Count", x = "Fire Start Season", title = "Fire Start Season by Event Status")
+```
+
+
+
+```{r}
+# Kaplan-Meier
+surv_obj <- Surv(time = fire$time_to_hit_hours, event = fire$event)
+surv.fit <- survfit(surv_obj~1, conf.int = 0.95)
+survfit2(surv_obj ~ 1, data = fire) |>
+  ggsurvfit() +
+  add_confidence_interval() +
+  add_risktable() +                   
+  add_risktable_strata_symbol() +
+  scale_ggsurvfit() +
+  labs(
+    title = "Kaplan-Meier Survival Curve",
+    x = "Time from fire started + 5 hrs (hours)",
+    y = "Survival Probability"
+  ) +
+  theme_classic()
+
+# KM by fire season
+surv.fit.by.season <- survfit(surv_obj ~ fire_month_period, data = fire, conf.type = "log-log")
+ggsurvplot(
+  surv.fit.by.season,
+  data = fire,
+  conf.int = TRUE,
+  conf.int.alpha = 0.15,
+  palette = c("#E41A1C", "#377EB8"),  
+  title = "Kaplan-Meier Survival Curve by Season",
+  xlab = "Time from fire started + 5 hrs (hours)",
+  ylab = "Survival Probability",
+  legend.title = "Season",
+  
+
+  legend.labs = c("Non-summer", "Summer"),
+  risk.table = TRUE,
+  risk.table.title = "Number at Risk",
+  risk.table.height = 0.30,  
+  risk.table.y.text = TRUE,   
+  risk.table.fontsize = 3.5,
+  tables.theme = theme_cleantable(),
+  
+
+  ggtheme = theme_classic(),
+  pval = TRUE,                
+  pval.coord = c(0.1, 0.1)    
+)
+
+# KM by low resolution
+surv.fit.resol <- survfit(surv_obj ~ low_temporal_resolution_0_5h, data = fire, conf.type = "log-log")
+ggsurvplot(
+  surv.fit.resol,
+  data = fire,
+  conf.int = TRUE,
+  conf.int.alpha = 0.15,
+  palette = c("#E41A1C", "#377EB8"),  
+  title = "Kaplan-Meier Survival Curve by Low Temporal Resolution",
+  xlab = "Time from fire started + 5 hrs (hours)",
+  ylab = "Survival Probability",
+  legend.title = "Low Temporal Resolution",
+  legend.labs = c("No", "Yes"), 
+  
+  risk.table = TRUE,
+  risk.table.title = "Number at Risk",
+  risk.table.height = 0.30,   
+  risk.table.y.text = TRUE,  
+  risk.table.fontsize = 3.5,
+  tables.theme = theme_cleantable(),
+  
+  pval = TRUE,                
+  pval.coord = c(0.1, 0.1), 
+
+)
+```
+
+
+```{r}
+###################################
+# Prepocessing
+###################################
+fire <- fire %>%
+  mutate(
+    hour_sin = sin(2 * pi * event_start_hour / 24),
+    hour_cos = cos(2 * pi * event_start_hour / 24),
+    dow_sin  = sin(2 * pi * event_start_dayofweek / 7),
+    dow_cos  = cos(2 * pi * event_start_dayofweek / 7)
+  )
+
+############################################################################
+# Log transformation for right-skewed variables
+# 
+# Variables with negatives are left on original scale.
+############################################################################
+
+fire <- fire %>%
+  mutate(
+    log_area_growth_rate  = log1p(area_growth_rate_ha_per_h),
+    log_radial_growth     = log1p(radial_growth_rate_m_per_h),
+    log_centroid_speed    = log1p(centroid_speed_m_per_h),
+    )
+
+numericlog_vars <-  c("log_area_growth_rate", "log_radial_growth", "log_centroid_speed")
+
+# Violin and box plots (log-transformed)
+fire_long_log <- fire %>%
+  dplyr::select(event, all_of(numericlog_vars)) %>%
+  pivot_longer(cols = -event,
+               names_to = "Variable",
+               values_to = "Value")
+ggplot(fire_long_log,
+       aes(x = factor(event), y = Value, fill = factor(event))) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.12, outlier.alpha = 0.2) +
+  facet_wrap(~ Variable,
+             ncol = 4, nrow = 3,
+             scales = "free_y") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    strip.text = element_text(size = 9)
+  ) +
+  labs(x = "Event",
+       y = "Value",
+       title = "Fire Features by Event Status")
+```
+
+
+
+```{r}
+##############################################################
+# Variable Selection Elastic Net (alpha = 0.5) with 5-fold CV
+##############################################################
+fire <- fire %>%
+  mutate(is_summer = as.integer(fire_month_period == "Summer (6-9)"))
+
+feature_vars <- c(
+  "log1p_area_first",
+  "log_area_growth_rate",
+  "log_area_ratio_0_5h",    
+  "log_radial_growth",
+  "log_centroid_speed",
+  
+  "alignment_cos",
+
+  "low_temporal_resolution_0_5h",
+
+  "hour_sin", "hour_cos",
+  "dow_sin",  "dow_cos",
+  
+  "is_summer"
+)
+
+X <- as.matrix(fire[, feature_vars])
+Y <- Surv(time = fire$time_to_hit_hours, event = fire$event)
+
+set.seed(42)
+
+cv_fit <- cv.glmnet(
+  x            = X,
+  y            = Y,
+  family       = "cox",
+  alpha        = 0.5, 
+  nfolds       = 5,
+  standardize  = TRUE,
+  type.measure = "C"         # Harrell's C-index as CV criterion
+)
+
+# Plot CV curve
+plot(cv_fit)
+title("5-fold CV Elastic Net (alpha=0.5) — Cox Model", line = 2.5)
+
+cat("\nOptimal lambda (lambda.min):", cv_fit$lambda.min, "\n")
+cat("lambda.1se (more parsimonious):", cv_fit$lambda.1se, "\n")
+
+
+# Use lambda.min for best predictive performance.
+coef_min <- coef(cv_fit, s = "lambda.min")
+selected_min <- rownames(coef_min)[which(coef_min != 0)]
+
+cat("\nVariables selected at lambda.min (", length(selected_min), "):\n")
+print(coef_min[selected_min, , drop = FALSE])
+```
+
+
+```{r}
+################################################################
+# PH Assumption Check (Schoenfeld Residuals)
+################################################################
+cox_formula <- as.formula(
+  paste("surv_obj ~", paste(selected_min, collapse = " + "))
+)
+
+cox_fit <- coxph(cox_formula, data = fire)
+summary(cox_fit)
+
+# Score Test
+ph_test <- cox.zph(cox_fit)
+print(ph_test)
+
+# Plot Schoenfeld residuals for each variable
+par(mfrow = c(ceiling(length(selected_min) / 3), 3))
+plot(ph_test)
+par(mfrow = c(1, 1))
+```
+
+
+
+```{r}
+#######################################################
+# Model Fitting - Baseline Survival Function
+#######################################################
+fire_scaled <- fire %>%
+  mutate(across(c(log1p_area_first, log_radial_growth, 
+                  log_centroid_speed, alignment_cos,
+                  hour_cos, dow_sin, dow_cos), scale))
+vars_formula <- surv_obj ~ log1p_area_first + log_radial_growth +
+                            log_centroid_speed + alignment_cos + 
+                            hour_cos + low_temporal_resolution_0_5h + 
+                            dow_sin + dow_cos + is_summer
+aft_weibull     <- flexsurvreg(vars_formula, data = fire_scaled, dist = "weibull")
+aft_exp         <- flexsurvreg(vars_formula, data = fire_scaled, dist = "exp")
+aft_gengamma   <- flexsurvreg(vars_formula, data = fire_scaled, dist = "gengamma")
+aft_lognormal  <- flexsurvreg(vars_formula, data = fire_scaled, dist = "lognormal")
+aft_loglogistic <- flexsurvreg(vars_formula, data = fire_scaled, dist = "llogis")
+aft_gamma       <- flexsurvreg(vars_formula, data = fire_scaled, dist = "gamma")
+
+aic_comparison <- data.frame(
+  Distribution = c("Weibull", "Exponential", "Generalized Gamma", "Log-normal", "Log-logistic", "Gamma"),
+  AIC = c(AIC(aft_weibull), AIC(aft_exp), AIC(aft_gengamma), AIC(aft_lognormal), 
+          AIC(aft_loglogistic), AIC(aft_gamma)),
+  BIC = c(BIC(aft_weibull), BIC(aft_exp),
+          BIC(aft_gengamma), BIC(aft_lognormal), 
+          BIC(aft_loglogistic), BIC(aft_gamma))
+) %>% arrange(AIC)
+
+print(aic_comparison)
+```
+
+
+
+```{r}
+# Non-linear comparison
+aft_spline_hour <- flexsurvreg(
+  surv_obj ~ log1p_area_first + log_radial_growth +
+             log_centroid_speed + alignment_cos +
+             ns(hour_cos, df = 2) +
+             low_temporal_resolution_0_5h + dow_sin + dow_cos + is_summer,
+  data = fire_scaled, dist = "llogis"
+)
+
+aft_spline_align <- flexsurvreg(
+  surv_obj ~ log1p_area_first + log_radial_growth +
+             log_centroid_speed + ns(alignment_cos, df = 2) +
+             hour_cos + low_temporal_resolution_0_5h +
+             dow_sin + dow_cos + is_summer,
+  data = fire_scaled, dist = "llogis"
+)
+
+aft_spline_dows <- flexsurvreg(
+  surv_obj ~ log1p_area_first + log_radial_growth +
+             log_centroid_speed + alignment_cos +
+             hour_cos + low_temporal_resolution_0_5h +
+             ns(dow_sin, df = 2) + dow_cos + is_summer,
+  data = fire_scaled, dist = "llogis")
+
+aft_spline_dowc <- flexsurvreg(
+  surv_obj ~ log1p_area_first + log_radial_growth +
+             log_centroid_speed + alignment_cos +
+             hour_cos + low_temporal_resolution_0_5h +
+             ns(dow_cos, df = 2) + dow_sin + is_summer,
+  data = fire_scaled, dist = "llogis")
+
+aic_nonlinear <- data.frame(
+  Model = c("Linear", "Spline Hour", "Spline Alignment", "Spline Week Sin", "Spline Week Cos"),
+  AIC   = c(AIC(aft_loglogistic), AIC(aft_spline_hour), AIC(aft_spline_align), 
+            AIC(aft_spline_dows), AIC(aft_spline_dowc)),
+  BIC   = c(BIC(aft_loglogistic), BIC(aft_spline_hour), BIC(aft_spline_align),
+            BIC(aft_spline_dows), BIC(aft_spline_dowc))
+) %>% arrange(AIC)
+
+print(aic_nonlinear)
+```
+
+
+```{r}
+library(caret)
+############################################
+# Initial AFT Model (fit using survreg())
+############################################
+fit_llogis_initial <- survreg(
+  surv_obj  ~ 
+    log1p_area_first + log_radial_growth +
+    log_centroid_speed + alignment_cos + 
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer,
+  data = fire_scaled,
+  dist = "loglogistic"
+)
+
+# Multicolinearity
+car::vif(fit_llogis_initial)
+
+###############################################################
+# Perform Model Selection (AIC, BIC, In-sample C-index, 3-fold CV C-index)
+###############################################################
+
+# Only radial growth
+fit_llogis_radial <- survreg(
+  surv_obj  ~ 
+    log1p_area_first + log_radial_growth +
+    alignment_cos + hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer,
+  data = fire_scaled,
+  dist = "loglogistic"
+)
+# Only centorid
+fit_llogis_centroid <- survreg(
+  surv_obj  ~ 
+    log1p_area_first + log_centroid_speed + alignment_cos + 
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer,
+  data = fire_scaled,
+  dist = "loglogistic"
+) 
+
+# AIC & BIC
+
+aic_colinear <- data.frame(
+  Model = c("Full 9-Variable", "Radial Growth Only", "Centroid Speed Only"),
+  AIC   = c(AIC(fit_llogis_initial), AIC(fit_llogis_radial), AIC(fit_llogis_centroid)),
+  BIC   = c(BIC(fit_llogis_initial), BIC(fit_llogis_radial), BIC(fit_llogis_centroid))
+) %>% arrange(AIC)
+
+print(aic_colinear)
+
+# -----------------------------------------------------------------------------
+# In-sample C-index
+# -----------------------------------------------------------------------------
+form_initial <- Surv(time_to_hit_hours, event) ~ 
+  log1p_area_first + log_radial_growth + log_centroid_speed +
+  alignment_cos + hour_cos + low_temporal_resolution_0_5h + 
+  dow_sin + dow_cos + is_summer
+
+form_centroid <- Surv(time_to_hit_hours, event) ~ 
+  log1p_area_first + log_centroid_speed +
+  alignment_cos + hour_cos + low_temporal_resolution_0_5h + 
+  dow_sin + dow_cos + is_summer
+
+form_radial <- Surv(time_to_hit_hours, event) ~ 
+  log1p_area_first + log_radial_growth +
+  alignment_cos + hour_cos + low_temporal_resolution_0_5h + 
+  dow_sin + dow_cos + is_summer
+
+model_formulas <- list(
+  initial  = form_initial,
+  centroid = form_centroid,
+  radial   = form_radial
+)
+
+insample_results <- data.frame(
+  Model = character(),
+  C_index = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (model_name in names(model_formulas)) {
+  
+  fit_full <- survreg(
+    formula = model_formulas[[model_name]],
+    data = fire_scaled,
+    dist = "loglogistic"
+  )
+  
+  lp_full <- predict(fit_full, newdata = fire_scaled, type = "lp")
+  
+  c_index <- concordance(
+    Surv(time_to_hit_hours, event) ~ lp_full,
+    data = fire_scaled
+  )$concordance
+  
+  insample_results <- rbind(
+    insample_results,
+    data.frame(
+      Model = model_name,
+      C_index = round(c_index, 4)
+    )
+  )
+}
+
+cat("\n=== In-sample C-index ===\n")
+print(insample_results)
+
+# -----------------------------------------------------------------------------
+# 3-Fold CV C-index
+# -----------------------------------------------------------------------------
+set.seed(260)
+folds <- createFolds(fire_scaled$event, k = 3, list = TRUE)
+
+cv_results <- data.frame(
+  Model = character(),
+  Fold_1 = numeric(),
+  Fold_2 = numeric(),
+  Fold_3 = numeric(),
+  Mean_CV_C_index = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (model_name in names(model_formulas)) {
+  
+  current_formula <- model_formulas[[model_name]]
+  cv_c_index_list <- numeric(3)
+  
+  for (i in 1:3) {
+    test_idx <- folds[[i]]
+    train_data <- fire_scaled[-test_idx, ]
+    test_data  <- fire_scaled[test_idx, ]
+    
+    fit_cv <- survreg(
+      formula = current_formula,
+      data = train_data,
+      dist = "loglogistic"
+    )
+    
+    lp_test <- predict(fit_cv, newdata = test_data, type = "lp")
+    
+    cv_c_index_list[i] <- concordance(
+      Surv(time_to_hit_hours, event) ~ lp_test,
+      data = test_data
+    )$concordance
+  }
+  
+  cv_results <- rbind(
+    cv_results,
+    data.frame(
+      Model = model_name,
+      Fold_1 = round(cv_c_index_list[1], 4),
+      Fold_2 = round(cv_c_index_list[2], 4),
+      Fold_3 = round(cv_c_index_list[3], 4),
+      Mean_CV_C_index = round(mean(cv_c_index_list), 4)
+    )
+  )
+}
+
+cat("\n=== 3-Fold CV C-index ===\n")
+print(cv_results)
+```
+
+
+```{r}
+###################################
+# FINAL AFT Model (8 predictors)
+###################################
+aft_loglogistic <- flexsurvreg(
+  surv_obj  ~ 
+    log1p_area_first + log_centroid_speed + alignment_cos + 
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer,
+  data = fire_scaled,
+  dist = "llogis"
+)
+
+fit_llogis <- survreg(
+  surv_obj  ~ 
+    log1p_area_first + log_centroid_speed + alignment_cos + 
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer,
+  data = fire_scaled,
+  dist = "loglogistic"
+)
+
+est_table <- aft_loglogistic$res
+aft_table <- data.frame(
+  Covariate = c(
+    "Shape ($\\kappa$)",
+    "Scale",
+    "Log Initial Area",
+    "Log Centroid Speed",
+    "Alignment Cosine",
+    "Hour (cos)",
+    "Low Temporal Resolution (Yes)",
+    "Day of Week (sin)",
+    "Day of Week (cos)",
+    "Summer (Yes)"
+  ),
+  est       = round(est_table[, "est"], 3),
+  SE        = round(est_table[, "se"], 3),
+  L95       = round(est_table[, "L95%"], 3),
+  U95       = round(est_table[, "U95%"],   5)
+) %>%
+  mutate(
+    `95% CI` = ifelse(
+      Covariate %in% c("Shape ($\\kappa$)", "Scale"),
+      NA,
+      paste0("(", format(round(est_table[, "L95%"], 3)),
+             ", ", format(round(est_table[, "U95%"], 3)), ")")
+    )
+  ) %>%
+  select(Covariate, est, SE, `95% CI`) 
+
+kable(aft_table,
+      caption = "AFT Model Estimates (Log-logistic Distribution)",
+      row.names = FALSE,
+      col.names = c("Coavriate", "Estimate", "SE", "95% CI"), 
+      align   = c("l", "c", "c", "c"))
+
+```
+
+
+
+
+```{r}
+################################
+# Model Diagnosis
+################################
+lp <- predict(fit_llogis, type = "lp")
+
+sigma <- fit_llogis$scale
+
+S_hat <- 1 - psurvreg(
+  q = fire$time_to_hit_hours,
+  mean = lp,
+  scale = sigma,
+  distribution = "loglogistic"
+)
+
+eps <- 1e-12
+S_hat <- pmax(S_hat, eps)
+
+# Cox-Snell residual
+cs_resid <- -log(S_hat)
+
+# Martingale residual
+mart_resid <- fire$event - cs_resid
+
+# Deviance residual
+dev_resid <- ifelse(
+  fire$event == 1,
+  sign(mart_resid) * sqrt(
+    pmax(0, -2 * (mart_resid + log(pmax(fire$event - mart_resid, eps))))
+  ),
+  sign(mart_resid) * sqrt(pmax(0, -2 * mart_resid))
+)
+
+# DFBETA
+dfb <- residuals(fit_llogis, type = "dfbeta")
+
+diag_llogis <- fire
+diag_llogis$lp          <- lp
+diag_llogis$S_hat       <- S_hat
+diag_llogis$cs_resid    <- cs_resid
+diag_llogis$mart_resid  <- mart_resid
+diag_llogis$dev_resid   <- dev_resid
+
+km_cs <- survfit(Surv(cs_resid, fire$event) ~ 1)
+
+plot(
+  km_cs$time,
+  -log(km_cs$surv),
+  type = "s",
+  xlab = "Cox-Snell Residual",
+  ylab = "Estimated Cumulative Hazard",
+  main = "Cox-Snell Residual Plot (survreg log-logistic)"
+)
+abline(0, 1, col = "red", lwd = 2, lty = 2)
+
+covariates <- c(
+  "log1p_area_first",
+  "log_centroid_speed",
+  "alignment_cos", 
+  "hour_cos",
+  "dow_sin", "dow_cos"
+)
+
+par(mfrow = c(3, 3), mar = c(4, 4, 2, 1))
+
+for (v in covariates) {
+  x <- diag_llogis[[v]]
+  y <- diag_llogis$mart_resid
+  
+  plot(
+    x, y,
+    xlab = v,
+    ylab = "Martingale-like Residual",
+    pch = 16, cex = 0.6
+  )
+  
+  if (length(unique(x[!is.na(x)])) > 1) {
+    lines(lowess(x, y), col = "red", lwd = 2)
+  }
+  
+  abline(h = 0, lty = 2, col = "blue")
+}
+
+par(mfrow = c(3, 3), mar = c(4, 4, 2, 1))
+for (v in covariates) {
+  x <- diag_llogis[[v]]
+  y <- diag_llogis$dev_resid
+  
+  plot(
+    x, y,
+    xlab = v,
+    ylab = "Deviance-like Residual",
+    pch = 16, cex = 0.6
+  )
+  
+  if (length(unique(x[!is.na(x)])) > 1) {
+    lines(lowess(x, y), col = "red", lwd = 2)
+  }
+  abline(h = 0, lty = 2, col = "blue")
+}
+
+ggplot(diag_llogis, aes(x = lp, y = mart_resid)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "loess", se = FALSE) +
+  geom_hline(yintercept = 0, linetype = 2, color = "red") +
+  labs(
+    x = "Linear predictor",
+    y = "Martingale-like Residual",
+    title = "Martingale-like Residual vs linear predictor"
+  ) +
+  theme_minimal()
+
+ggplot(diag_llogis, aes(x = lp, y = dev_resid)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "loess", se = FALSE) +
+  geom_hline(yintercept = 0, linetype = 2, color = "red") +
+  labs(
+    x = "Linear predictor",
+    y = "Deviance residual",
+    title = "Deviance residual vs linear predictor"
+  ) +
+  theme_minimal()
+
+
+colnames(dfb) <- c(names(coef(fit_llogis)), "Log(scale)")
+p <- ncol(dfb)
+par(mfrow = c(3, 3), mar = c(4, 4, 2, 1))
+
+for (j in 2:(ncol(dfb)-1)) {
+  plot(
+    dfb[, j],
+    ylab = "DFBETA",
+    xlab = "Observation Index",
+    main = colnames(dfb)[j],
+    pch = 16, cex = 0.6
+  )
+  abline(h = 0, lty = 2, col = "red")
+}
+```
+
+
+```{r}
+################################
+# Probability Prediction
+################################
+p12 <- summary(aft_loglogistic, newdata = fire_scaled, t = 7, type = "survival")
+p24 <- summary(aft_loglogistic, newdata = fire_scaled, t = 19, type = "survival")
+p48 <- summary(aft_loglogistic, newdata = fire_scaled, t = 43, type = "survival")
+p72 <- summary(aft_loglogistic, newdata = fire_scaled, t = 66.9944741327, type = "survival")
+
+extract_prob_ci <- function(pred_list, horizon_label){
+  out <- do.call(rbind, lapply(seq_along(pred_list), function(i){
+    data.frame(
+      row_id = i,
+      horizon = horizon_label,
+      time = pred_list[[i]][1, "time"],
+      surv_est = pred_list[[i]][1, "est"],
+      surv_lcl = pred_list[[i]][1, "lcl"],
+      surv_ucl = pred_list[[i]][1, "ucl"],
+      prob_est = 1 - pred_list[[i]][1, "est"],
+      prob_lcl = 1 - pred_list[[i]][1, "ucl"],
+      prob_ucl = 1 - pred_list[[i]][1, "lcl"]
+    )
+  }))
+  rownames(out) <- NULL
+  out
+}
+
+tab12 <- extract_prob_ci(p12, "12h")
+tab24 <- extract_prob_ci(p24, "24h")
+tab48 <- extract_prob_ci(p48, "48h")
+tab72 <- extract_prob_ci(p72, "72h")
+
+pred_long <- bind_rows(tab12, tab24, tab48, tab72) %>%
+  select(-c("time", "surv_est", "surv_lcl", "surv_ucl")) %>%
+  rename(
+    ID = row_id,
+    Horizon = horizon,
+    `Est. Risk` = prob_est
+  ) %>%
+  mutate(
+    `95% CI` = paste0(
+      "(", sprintf("%.3f", prob_lcl), ", ", sprintf("%.3f", prob_ucl), ")"
+    ),
+    `Est. Risk` = sprintf("%.3f", `Est. Risk`)
+  ) %>%
+  select(ID, Horizon, `Est. Risk`, `95% CI`)
+
+fire_info <- fire %>%
+  mutate(ID = row_number()) %>%
+  select(ID, event, time_to_hit_hours)
+
+pred_top4 <- pred_long %>%
+  group_by(Horizon) %>%
+  slice_head(n = 4) %>%
+  ungroup() %>%
+  mutate(Horizon = factor(Horizon, levels = c("12h", "24h", "48h", "72h"))) %>%
+  arrange(ID, Horizon) %>%
+  left_join(fire_info, by = "ID") %>%
+  mutate(event = ifelse(event == 1, "Yes", "No")) %>% 
+  select(ID, event, time_to_hit_hours, Horizon, `Est. Risk`, `95% CI`) %>%
+  rename(
+    `Fire Hit` = event,
+    `Time to Hit (h)` = time_to_hit_hours
+  )
+
+kable(pred_top4, align = "c", caption = "Predicted Fire Hit Probability by Horizon", digits = 3)
+```
+
+
+```{r}
+######################################################################
+# Model Evaluation (AUC & Brier Score)
+######################################################################
+library(timeROC)
+library(pec)
+
+eval_times <- c(7, 19, 43, 66.9944741327)
+
+# -----------------------------------------------------------------------------
+# Time-Dependent AUC 
+# -----------------------------------------------------------------------------
+
+lp_aft <- predict(fit_llogis, type = "lp")
+
+roc_dynamic <- timeROC(
+  T = fire$time_to_hit_hours,
+  delta = fire$event,
+  marker = -lp_aft,     
+  cause = 1,
+  weighting = "marginal",
+  times = eval_times,
+  iid = FALSE
+)
+
+cat("\n=== Time-Dependent AUC (AFT Model) ===\n")
+auc_table <- data.frame(
+  Horizon_Hours = c("12h", "24h", "48h", "72h"),
+  Follow_up_Time = eval_times,
+  AUC = round(roc_dynamic$AUC, 4)
+)
+print(auc_table)
+
+
+# -----------------------------------------------------------------------------
+# Time-Dependent Brier Score
+# -----------------------------------------------------------------------------
+
+sigma <- fit_llogis$scale
+
+eval_times_pec <- c(0, eval_times)
+
+surv_prob_matrix <- sapply(eval_times_pec, function(t) {
+  if (t == 0) {
+    rep(1, nrow(fire)) 
+  } else {
+    1 - plogis((log(t) - lp_aft) / sigma)
+  }
+})
+
+brier_dynamic <- pec(
+  object = list("AFT_LogLogistic" = surv_prob_matrix),
+  formula = Surv(time_to_hit_hours, event) ~ 1,
+  data = fire_scaled,
+  times = eval_times,
+  exact = FALSE,
+  cens.model = "marginal"
+)
+
+cat("\n=== Time-Dependent Brier Score (AFT Model) ===\n")
+print(brier_dynamic$AppErr)
+
+# -----------------------------------------------------------------------------
+# In-sample C-index
+# -----------------------------------------------------------------------------
+
+sample_c_index <- concordance(Surv(time_to_hit_hours, event) ~ lp_aft, data = fire_scaled)
+cat("\n=== In-sample C-index (AFT Model) ===\n")
+
+print(round(sample_c_index$concordance, 4))
+
+# -----------------------------------------------------------------------------
+# 3-Fold CV C-index
+# -----------------------------------------------------------------------------
+set.seed(260) 
+folds <- createFolds(fire_scaled$event, k = 3, list = TRUE)
+
+cv_c_index_list <- c()
+
+for(i in 1:3) {
+  test_idx <- folds[[i]]
+  train_data <- fire_scaled[-test_idx, ]
+  test_data <- fire_scaled[test_idx, ]
+
+  fit_cv <- survreg(
+    formula = Surv(time_to_hit_hours, event) ~ log1p_area_first + 
+              log_centroid_speed + alignment_cos + hour_cos + 
+              low_temporal_resolution_0_5h + dow_sin + dow_cos + is_summer, 
+    data = train_data, 
+    dist = "loglogistic"
+  )
+  
+  lp_test <- predict(fit_cv, newdata = test_data, type = "lp")
+  
+  fold_c_index <- concordance(Surv(test_data$time_to_hit_hours, test_data$event) ~ lp_test)$concordance
+  cv_c_index_list <- c(cv_c_index_list, fold_c_index)
+}
+
+cat("\n=== 3-Fold CV C-index (AFT Model) ===\n")
+cat("Fold C-indices:", round(cv_c_index_list, 4), "\n")
+cat("Mean CV C-index:", round(mean(cv_c_index_list), 4), "\n")
+
+```
+
+
+```{r}
+######################################################
+# Alternative directional-variable - adding alignment_abs
+######################################################
+fit_add_abs <- survreg(
+  surv_obj  ~ 
+    log1p_area_first + log_centroid_speed + alignment_cos + alignment_abs +
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer,
+  data = fire_scaled,
+  dist = "loglogistic"
+)
+
+fit_only_abs <- survreg(
+  surv_obj  ~ 
+    log1p_area_first + log_centroid_speed + alignment_abs +
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer,
+  data = fire_scaled,
+  dist = "loglogistic"
+)
+
+cat("\n=== Information Criteria (AFT Model) ===\n")
+cat("AIC:", AIC(fit_llogis), AIC(fit_add_abs), AIC(fit_only_abs), "\n")
+cat("BIC:", BIC(fit_llogis), BIC(fit_add_abs), BIC(fit_only_abs), "\n")
+
+
+aic_abs <- data.frame(
+  Model = c("only cos", "Both (cos + sin)", "only abs"), 
+  AIC   = c(AIC(fit_llogis), AIC(fit_add_abs), AIC(fit_only_abs)),
+  BIC   = c(BIC(fit_llogis), BIC(fit_add_abs), BIC(fit_only_abs))
+) %>% arrange(AIC)
+
+print(aic_abs)
+
+# -----------------------------------------------------------------------------
+# In-sample C-index
+# -----------------------------------------------------------------------------
+form_both <- Surv(time_to_hit_hours, event) ~ 
+  log1p_area_first + log_centroid_speed + alignment_cos + alignment_abs +
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer
+
+form_abs <- Surv(time_to_hit_hours, event) ~ 
+    log1p_area_first + log_centroid_speed + alignment_abs +
+    hour_cos + low_temporal_resolution_0_5h + 
+    dow_sin + dow_cos + is_summer
+
+model_formulas <- list(
+  abs_only = form_abs,
+  both   = form_both
+)
+
+insample_results <- data.frame(
+  Model = character(),
+  C_index = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (model_name in names(model_formulas)) {
+  
+  fit_full <- survreg(
+    formula = model_formulas[[model_name]],
+    data = fire_scaled,
+    dist = "loglogistic"
+  )
+  
+  lp_full <- predict(fit_full, newdata = fire_scaled, type = "lp")
+  
+  c_index <- concordance(
+    Surv(time_to_hit_hours, event) ~ lp_full,
+    data = fire_scaled
+  )$concordance
+  
+  insample_results <- rbind(
+    insample_results,
+    data.frame(
+      Model = model_name,
+      C_index = round(c_index, 4)
+    )
+  )
+}
+
+cat("\n=== In-sample C-index ===\n")
+print(insample_results)
+
+# -----------------------------------------------------------------------------
+# 3-Fold CV C-index
+# -----------------------------------------------------------------------------
+set.seed(260)
+folds <- createFolds(fire_scaled$event, k = 3, list = TRUE)
+
+cv_results <- data.frame(
+  Model = character(),
+  Fold_1 = numeric(),
+  Fold_2 = numeric(),
+  Fold_3 = numeric(),
+  Mean_CV_C_index = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (model_name in names(model_formulas)) {
+  
+  current_formula <- model_formulas[[model_name]]
+  cv_c_index_list <- numeric(3)
+  
+  for (i in 1:3) {
+    test_idx <- folds[[i]]
+    train_data <- fire_scaled[-test_idx, ]
+    test_data  <- fire_scaled[test_idx, ]
+    
+    fit_cv <- survreg(
+      formula = current_formula,
+      data = train_data,
+      dist = "loglogistic"
+    )
+    
+    lp_test <- predict(fit_cv, newdata = test_data, type = "lp")
+    
+    cv_c_index_list[i] <- concordance(
+      Surv(time_to_hit_hours, event) ~ lp_test,
+      data = test_data
+    )$concordance
+  }
+  
+  cv_results <- rbind(
+    cv_results,
+    data.frame(
+      Model = model_name,
+      Fold_1 = round(cv_c_index_list[1], 4),
+      Fold_2 = round(cv_c_index_list[2], 4),
+      Fold_3 = round(cv_c_index_list[3], 4),
+      Mean_CV_C_index = round(mean(cv_c_index_list), 4)
+    )
+  )
+}
+
+cat("\n=== 3-Fold CV C-index ===\n")
+print(cv_results)
+```
+
+
+
+
+
+

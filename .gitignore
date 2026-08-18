@@ -27,7 +27,6 @@ data/*.sqlite
 !data/data_dictionary.md
 
 # Generated outputs
-outputs/figures/*.png
 outputs/figures/*.pdf
 !outputs/figures/README.md
 

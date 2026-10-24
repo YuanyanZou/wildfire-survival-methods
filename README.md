@@ -63,7 +63,7 @@ Multivariable Cox diagnostics -> PH assumption violated
 Switch to log-logistic AFT
                 |
                 v
-Resolve collinearity + model comparison: radial growth vs. centroid speed, VIF > 100
+Resolve collinearity + model comparison: radial growth vs. centroid speed, VIF ≈ 145
                 |
                 v
 Final 8-variable AFT model

@@ -89,7 +89,7 @@ Retaining these variables would reduce the task to a deterministic threshold rul
 7. Evaluate internal discrimination and calibration.
 8. Compare the AFT feature set with an expanded RSF benchmark as a sensitivity analysis.
 
-[Methodology Notes](METHODOLOGY.md) shows rationale for landmarking, feature exclusion, model selection, and sensitivity analyses.
+[Methodology Notes](docs/methodology_notes.md) shows rationale for landmarking, feature exclusion, model selection, and sensitivity analyses.
 ## Results
 
 The jointly authored report selected an 8-variable log-logistic AFT model:
